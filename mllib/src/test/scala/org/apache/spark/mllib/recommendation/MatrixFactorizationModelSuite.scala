@@ -18,14 +18,13 @@
 package org.apache.spark.mllib.recommendation
 
 import org.apache.spark.mllib.linalg.{DenseMatrix, Vectors}
-import org.scalatest.FunSuite
-
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.mllib.util.MLlibTestSparkContext
 import org.apache.spark.mllib.util.TestingUtils._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.Utils
 
-class MatrixFactorizationModelSuite extends FunSuite with MLlibTestSparkContext {
+class MatrixFactorizationModelSuite extends SparkFunSuite with MLlibTestSparkContext {
 
   val rank = 2
   var userFeatures: RDD[(Int, Array[Double])] = _
