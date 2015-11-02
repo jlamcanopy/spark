@@ -29,7 +29,10 @@
 package org.apache.spark.examples.mllib
 
 import org.apache.log4j.{Level, Logger}
+import org.apache.spark.mllib.feature.{IDF, HashingTF}
+import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.mllib.linalg.distributed.{CoordinateMatrix, MatrixEntry}
+import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SQLContext
 import org.apache.spark.{SparkConf, SparkContext}
 import scopt.OptionParser
@@ -97,6 +100,16 @@ object RowSimilarity {
     val numRatings = featureRdd.count()
     val numUsers = featureRdd.map(_.user).distinct().count()
     val numMovies = featureRdd.map(_.item).distinct().count()
+
+    //FEATURE EXTRACTION
+    val htf = new HashingTF()
+    val documents:RDD[Seq[String]]= ???
+    val tf: RDD[Vector] = htf.transform(documents)
+    tf.cache()
+    val idf = new IDF().fit(tf)
+    val tfidf: RDD[Vector] = idf.transform(tf)
+    //FEATURE EXTRACTION
+
 
     println(s"Got $numRatings ratings from $numUsers users on $numMovies movies.")
 
