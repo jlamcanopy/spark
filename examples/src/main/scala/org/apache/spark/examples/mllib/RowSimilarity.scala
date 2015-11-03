@@ -29,10 +29,8 @@
 package org.apache.spark.examples.mllib
 
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.mllib.feature.{IDF, HashingTF}
 import org.apache.spark.mllib.linalg.Vector
-import org.apache.spark.mllib.linalg.distributed.{CoordinateMatrix, MatrixEntry}
-import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.linalg.distributed.{IndexedRow, IndexedRowMatrix, MatrixEntry}
 import org.apache.spark.sql.SQLContext
 import org.apache.spark.{SparkConf, SparkContext}
 import scopt.OptionParser
@@ -41,9 +39,11 @@ import scala.collection.mutable
 
 object RowSimilarity {
   case class Rating(user: Int, item: Int, tfidf: Double)
+  case class CustomEntry (nRows: Long, nCols: Long, matrixEntry: MatrixEntry)
 
   case class Params(
       input: String = null,
+      output: String = null,
       delim: String = "::",
       topk: Int = 50,
       threshold: Double = 1e-4
@@ -63,6 +63,10 @@ object RowSimilarity {
       opt[String]("delim")
         .text("use delimiter, default ::")
         .action((x, c) => c.copy(delim = x))
+      arg[String]("output")
+        .required()
+        .text("output paths for recommendation")
+        .action((x, c) => c.copy(input = x))
       arg[String]("<input>")
         .required()
         .text("input paths to a MovieLens dataset of ratings")
@@ -94,44 +98,25 @@ object RowSimilarity {
     Logger.getRootLogger.setLevel(Level.WARN)
     val sqlContext = new SQLContext(sc)
 
-    val movies = sqlContext.read.parquet(params.input)
-    val featureRdd = movies.map( row => Rating(row.getInt(0)-1, row.getInt(1)-1, row.getDouble(2)))
-
-    val numRatings = featureRdd.count()
-    val numUsers = featureRdd.map(_.user).distinct().count()
-    val numMovies = featureRdd.map(_.item).distinct().count()
-
-    //FEATURE EXTRACTION
-    val htf = new HashingTF()
-    val documents:RDD[Seq[String]]= ???
-    val tf: RDD[Vector] = htf.transform(documents)
-    tf.cache()
-    val idf = new IDF().fit(tf)
-    val tfidf: RDD[Vector] = idf.transform(tf)
-    //FEATURE EXTRACTION
-
-
-    println(s"Got $numRatings ratings from $numUsers users on $numMovies movies.")
+    val featureRdd = sqlContext.read.parquet(params.input)
 
     val itemFeatures = featureRdd.map { feature =>
-      MatrixEntry(feature.user, feature.item, feature.tfidf)
+      IndexedRow(feature.getAs[Int]("product_id"),feature.getAs[Vector]("tfidf"))
     }
-    val itemMatrix = new CoordinateMatrix(itemFeatures).toIndexedRowMatrix()
 
+    val numProducts = featureRdd.select("product_id").distinct.count
+    val numFeatures = featureRdd.select("tfidf").take(1).map{case (v: Vector) => v.size}.orElse(Array(0))
+
+    println(s"Got ${numFeatures(0)} features per product from $numProducts products.")
+
+    val itemMatrix = new IndexedRowMatrix(itemFeatures)
     val rowSimilaritiesApprox = itemMatrix.rowSimilarities(topk= params.topk, threshold = params.threshold)
 
+    import sqlContext.implicits._
+    val nRows=rowSimilaritiesApprox.numCols()
+    val nCols=rowSimilaritiesApprox.numRows()
+    rowSimilaritiesApprox.entries.map(entry => CustomEntry(nRows, nCols, entry)).toDF.write.parquet(params.output)
     sc.stop()
   }
 
-  def transform(sqlContext: SQLContext, delim: String): Unit = {
-    import sqlContext.implicits._
-    for (i <- 1 to 10) {
-      val df = sqlContext.sparkContext.textFile("/movies_rating.csv").map{line =>
-        val fields = line.split(",")
-        (fields(0).toInt + (138493 * i), fields(1).toInt, fields(2).toDouble)
-      }.toDF("user_id", "movie_id", "rating")
-      df.write.parquet(s"/movie_dataset/${i}/")
-    }
-
-  }
 }

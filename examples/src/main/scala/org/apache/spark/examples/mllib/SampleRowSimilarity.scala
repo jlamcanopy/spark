@@ -28,22 +28,19 @@
  */
 package org.apache.spark.examples.mllib
 
-import org.apache.spark.mllib.linalg.Vector
 import org.apache.log4j.{Level, Logger}
-import org.apache.spark.ml.feature.{HashingTF, IDF, Tokenizer}
-import org.apache.spark.mllib.linalg.distributed._
-import org.apache.spark.sql.{DataFrame, SQLContext}
+import org.apache.spark.mllib.linalg.distributed.{CoordinateMatrix, MatrixEntry}
+import org.apache.spark.sql.SQLContext
 import org.apache.spark.{SparkConf, SparkContext}
 import scopt.OptionParser
 
 import scala.collection.mutable
 
-object TextTFIDF {
+object SampleRowSimilarity {
   case class Rating(user: Int, item: Int, tfidf: Double)
 
   case class Params(
       input: String = null,
-      output: String = null,
       delim: String = "::",
       topk: Int = 50,
       threshold: Double = 1e-4
@@ -66,10 +63,6 @@ object TextTFIDF {
       arg[String]("<input>")
         .required()
         .text("input paths to a MovieLens dataset of ratings")
-        .action((x, c) => c.copy(input = x))
-      arg[String]("output")
-        .required()
-        .text("output paths")
         .action((x, c) => c.copy(input = x))
       note(
         """
@@ -99,19 +92,33 @@ object TextTFIDF {
     val sqlContext = new SQLContext(sc)
 
     val movies = sqlContext.read.parquet(params.input)
+    val featureRdd = movies.map( row => Rating(row.getInt(0)-1, row.getInt(1)-1, row.getDouble(2)))
 
+    val numRatings = featureRdd.count()
+    val numUsers = featureRdd.map(_.user).distinct().count()
+    val numMovies = featureRdd.map(_.item).distinct().count()
 
-    val products : DataFrame = movies //MongoDB source
+    println(s"Got $numRatings ratings from $numUsers users on $numMovies movies.")
 
-    val tokenizer = new Tokenizer().setInputCol("description").setOutputCol("words")
-    val wordsData = tokenizer.transform(products)
-    val hashingTF = new HashingTF().setInputCol("words").setOutputCol("rawFeatures")
-    val featurizedData = hashingTF.transform(wordsData)
-    val idf = new IDF().setInputCol("rawFeatures").setOutputCol("tfidf")
-    val idfModel = idf.fit(featurizedData)
-    val featureRdd = idfModel.transform(featurizedData).drop("rawFeatures").drop("words")
-    featureRdd.write.parquet(params.output)
+    val itemFeatures = featureRdd.map { feature =>
+      MatrixEntry(feature.user, feature.item, feature.tfidf)
+    }
+    val itemMatrix = new CoordinateMatrix(itemFeatures).toIndexedRowMatrix()
+
+    val rowSimilaritiesApprox = itemMatrix.rowSimilarities(topk= params.topk, threshold = params.threshold)
 
     sc.stop()
+  }
+
+  def transform(sqlContext: SQLContext, delim: String): Unit = {
+    import sqlContext.implicits._
+    for (i <- 1 to 10) {
+      val df = sqlContext.sparkContext.textFile("/movies_rating.csv").map{line =>
+        val fields = line.split(",")
+        (fields(0).toInt + (138493 * i), fields(1).toInt, fields(2).toDouble)
+      }.toDF("user_id", "movie_id", "rating")
+      df.write.parquet(s"/movie_dataset/${i}/")
+    }
+
   }
 }
