@@ -15,17 +15,6 @@
  * limitations under the License.
  */
 
-/**
- * An example app for running item similarity computation on MovieLens format
- * sparse data (http://grouplens.org/datasets/movielens/) through column based
- * similarity calculation and compare with row based similarity calculation and
- * ALS + row based similarity calculation flow. For running row and column based
- * similarity on raw features, we are using implicit matrix factorization.
- *
- *
- * A synthetic dataset in MovieLens format can be found at `data/mllib/sample_movielens_data.txt`.
- * If you use it as a template to create your own app, please use `spark-submit` to submit your app.
- */
 package org.apache.spark.examples.mllib
 
 import org.apache.log4j.{Level, Logger}
@@ -38,7 +27,6 @@ import scopt.OptionParser
 import scala.collection.mutable
 
 object RowSimilarity {
-  case class Rating(user: Int, item: Int, tfidf: Double)
   case class CustomEntry (nRows: Long, nCols: Long, matrixEntry: MatrixEntry)
 
   case class Params(
@@ -52,13 +40,13 @@ object RowSimilarity {
   def main(args: Array[String]) {
     val defaultParams = Params()
 
-    val parser = new OptionParser[Params]("MovieLensSimilarity") {
-      head("MovieLensSimilarity: an example app for similarity flows on MovieLens data.")
+    val parser = new OptionParser[Params]("Product Similarity") {
+      head("Indigo Row Similarity")
       opt[Int]("topk")
-        .text("topk for ALS validation")
+        .text("top k similar products")
         .action((x, c) => c.copy(topk = x))
       opt[Double]("threshold")
-        .text("threshold for dimsum sampling and kernel sparsity")
+        .text("threshold for kernel sparsity")
         .action((x, c) => c.copy(threshold = x))
       opt[String]("delim")
         .text("use delimiter, default ::")
@@ -69,15 +57,14 @@ object RowSimilarity {
         .action((x, c) => c.copy(input = x))
       arg[String]("<input>")
         .required()
-        .text("input paths to a MovieLens dataset of ratings")
+        .text("input paths to a product dataset")
         .action((x, c) => c.copy(input = x))
       note(
         """
           |For example, the following command runs this app on a synthetic dataset:
           |
-          | bin/run-example mllib.MovieLensSimilarity \
-          |  --rank 25 --numIterations 20 --alpha 0.01 --topk 25\
-          |  data/mllib/sample_movielens_data.txt
+          | bin/run-example mllib.RowSimilarity \
+          |  --topk 100 s3a://sample_product_data
         """.stripMargin)
     }
 
@@ -91,8 +78,8 @@ object RowSimilarity {
   def run(params: Params) {
     val conf =
       new SparkConf()
-        .setAppName(s"Scalability Test MovieLensSimilarity with $params")
-        .registerKryoClasses(Array(classOf[mutable.BitSet], classOf[Rating]))
+        .setAppName(s"Row Similarity Recommendation for Indigo with $params")
+        .registerKryoClasses(Array(classOf[mutable.BitSet], classOf[CustomEntry]))
 
     val sc = new SparkContext(conf)
     Logger.getRootLogger.setLevel(Level.WARN)
@@ -101,12 +88,12 @@ object RowSimilarity {
     val featureRdd = sqlContext.read.parquet(params.input)
 
     val itemFeatures = featureRdd.map { feature =>
-      IndexedRow(feature.getAs[Int]("product_id"),feature.getAs[Vector]("tfidf"))
+      IndexedRow(feature.getAs[Int]("product_id"),feature.getAs[Vector]("features"))
     }
 
     val numProducts = featureRdd.select("product_id").distinct.count
-    val numFeatures = featureRdd.select("tfidf").take(1).map{case (v: Vector) => v.size}.orElse(Array(0))
-
+    val numFeatures = featureRdd.select("features").take(1)
+                                .map{case (v: Vector) => v.size}.orElse(Array(0))
     println(s"Got ${numFeatures(0)} features per product from $numProducts products.")
 
     val itemMatrix = new IndexedRowMatrix(itemFeatures)
@@ -118,5 +105,4 @@ object RowSimilarity {
     rowSimilaritiesApprox.entries.map(entry => CustomEntry(nRows, nCols, entry)).toDF.write.parquet(params.output)
     sc.stop()
   }
-
 }
