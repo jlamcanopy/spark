@@ -32,7 +32,6 @@ object RowSimilarity {
   case class Params(
       input: String = null,
       output: String = null,
-      delim: String = "::",
       topk: Int = 50,
       threshold: Double = 1e-4
                      ) extends AbstractParams[Params]
@@ -48,13 +47,10 @@ object RowSimilarity {
       opt[Double]("threshold")
         .text("threshold for kernel sparsity")
         .action((x, c) => c.copy(threshold = x))
-      opt[String]("delim")
-        .text("use delimiter, default ::")
-        .action((x, c) => c.copy(delim = x))
-      arg[String]("output")
+      opt[String]("output")
         .required()
         .text("output paths for recommendation")
-        .action((x, c) => c.copy(input = x))
+        .action((x, c) => c.copy(output = x))
       arg[String]("<input>")
         .required()
         .text("input paths to a product dataset")
@@ -87,22 +83,20 @@ object RowSimilarity {
 
     val featureRdd = sqlContext.read.parquet(params.input)
 
-    val itemFeatures = featureRdd.map { feature =>
-      IndexedRow(feature.getAs[Int]("product_id"),feature.getAs[Vector]("features"))
-    }
-
-    val numProducts = featureRdd.select("product_id").distinct.count
-    val numFeatures = featureRdd.select("features").take(1)
-                                .map{case (v: Vector) => v.size}.orElse(Array(0))
+    val numProducts = featureRdd.select("uid").distinct.count
+    val numFeatures = featureRdd.select("features").take(1).map{row => row.getAs[Vector]("features").size}
     println(s"Got ${numFeatures(0)} features per product from $numProducts products.")
 
-    val itemMatrix = new IndexedRowMatrix(itemFeatures)
+    val itemFeatures = featureRdd.map { feature =>
+      IndexedRow(feature.getAs[Long]("uid"),feature.getAs[Vector]("features"))
+    }.repartition(sc.defaultParallelism)
+
+    val itemMatrix = new IndexedRowMatrix(itemFeatures, numProducts, numFeatures(0))
+
     val rowSimilaritiesApprox = itemMatrix.rowSimilarities(topk= params.topk, threshold = params.threshold)
 
     import sqlContext.implicits._
-    val nRows=rowSimilaritiesApprox.numCols()
-    val nCols=rowSimilaritiesApprox.numRows()
-    rowSimilaritiesApprox.entries.map(entry => CustomEntry(nRows, nCols, entry)).toDF.write.parquet(params.output)
+    rowSimilaritiesApprox.entries.toDF.write.parquet(params.output)
     sc.stop()
   }
 }

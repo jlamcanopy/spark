@@ -19,15 +19,12 @@ package org.apache.spark.mllib.linalg.distributed
 
 import breeze.linalg.{DenseMatrix => BDM}
 import org.apache.spark.HashPartitioner
-
-import scala.collection.Map
 import org.apache.spark.annotation.Experimental
-import org.apache.spark.rdd.RDD
-import org.apache.spark.mllib.linalg._
-import org.apache.spark.mllib.linalg.SingularValueDecomposition
-import scala.collection.mutable
+import org.apache.spark.mllib.linalg.{SingularValueDecomposition, _}
 import org.apache.spark.mllib.rdd.MLPairRDDFunctions._
-import KernelType._
+import org.apache.spark.rdd.RDD
+
+import scala.collection.{Map, mutable}
 
 /**
  * :: Experimental ::
@@ -264,7 +261,8 @@ class IndexedRowMatrix(
           val smallIndex = smallRows(j).index
           val smallRow = smallRows(j).vector
           val kernelVal = kernel.compute(smallRow, smallIndex, bigRow, bigIndex)
-          if (kernelVal != 0.0) {
+
+          if (kernelVal != 0.0 && ! kernelVal.isNaN) {
             val entry = (bigIndex, (smallIndex, kernelVal))
             buf += entry
           }
